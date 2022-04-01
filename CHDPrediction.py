@@ -4,10 +4,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import tensorflow as tf
-from imblearn.over_sampling import SMOTE
-from imblearn.over_sampling import SVMSMOTE
-from imblearn.over_sampling import KMeansSMOTE
-from imblearn.over_sampling import BorderlineSMOTE
+
 from matplotlib import pyplot as plt
 from numpy.random import seed
 from sklearn import metrics
@@ -17,6 +14,8 @@ from sklearn.linear_model import Lasso
 from sklearn.manifold import TSNE
 from sklearn.model_selection import train_test_split
 from tensorflow import keras
+
+from OverSample import OverSample
 
 np.random.seed(2095)
 
@@ -52,22 +51,6 @@ class CHDOverSampled:
         print(str(len(ipData.index)) + " records")
         return ipData
 
-    def augment_whole_dataset(self, ip_data):
-        from sklearn.utils import shuffle
-        X = ip_data.iloc[:, :-1]
-        y = ip_data.CoronaryHeartDisease
-        over_sample = SMOTE()
-        smote_X, smote_y = over_sample.fit_resample(X, y)
-        smote_X = pd.DataFrame(smote_X)
-        smote_y = pd.DataFrame(smote_y)
-        aug_data = pd.concat([smote_X, smote_y], axis=1)
-        aug_data = shuffle(aug_data)
-        CHD_label = aug_data.CoronaryHeartDisease
-        counter = Counter(CHD_label)
-        print("shape of augmented dataset" + str(aug_data.shape))
-        print("distribution of augmented dataset = " + str(counter))
-        return aug_data
-
     def drop_variables(self, ip_data):
         # data drop
         self.opLabel = np.array(ip_data['CoronaryHeartDisease'])
@@ -101,17 +84,17 @@ class CHDOverSampled:
             np.random.shuffle(label1_index)
             label0_index_train = label0_index[0:numTrainData0 - 1]
             label1_index_train = label1_index[0:numTrainData1 - 1]
-            label0_index_test = label0_index[numTrainData0 - 1:]
-            label1_index_test = label1_index[numTrainData1 - 1:]
-            testIndex = np.append(label0_index_test, label1_index_test)
+            # label0_index_test = label0_index[numTrainData0 - 1:]
+            # label1_index_test = label1_index[numTrainData1 - 1:]
+            # testIndex = np.append(label0_index_test, label1_index_test)
             trainIndex = np.append(label0_index_train, label1_index_train)
             trainData = ip_data[trainIndex]
             trainLabel = self.opLabel[trainIndex]
-            testData = ip_data[testIndex]
-            testLabel = self.opLabel[testIndex]
+            # testData = ip_data[testIndex]
+            # testLabel = self.opLabel[testIndex]
             scaler = preprocessing.StandardScaler().fit(trainData)
             trainData_scaled = scaler.transform(trainData)
-            testData_scaled = scaler.transform(testData)
+            # testData_scaled = scaler.transform(testData)
             # Elastic net and Lasso from scikit
             # regr = ElasticNet(random_state=0, alpha=1, l1_ratio=0.03, tol=0.000001, max_iter=100000)
             regr = Lasso(random_state=0, alpha=0.006, tol=0.000001, max_iter=100000)
@@ -147,18 +130,19 @@ class CHDOverSampled:
                                                                               stratify=self.opLabel,
                                                                               random_state=5)
         # apply Over Sampling methods only over train-set
+        over_sample = OverSample()
         if over_sampler == 'SMOTE':
-            self.X_train, self.y_train = self.smote_over_sample(self.X_train, self.y_train)
-        if over_sampler == 'K_MEANS_SMOTE':
-            self.X_train, self.y_train = self.k_means_smote_over_sample(self.X_train, self.y_train)
-        if over_sampler == 'SVM_SMOTE':
-            self.X_train, self.y_train = self.svm_smote_over_sample(self.X_train, self.y_train)
-            if over_sampler == 'BORDERLINE_SMOTE':
-                self.X_train, self.y_train = self.borderline_smote_over_sample(self.X_train, self.y_train)
+            self.X_train, self.y_train = over_sample.smote(self.X_train, self.y_train)
+        elif over_sampler == 'K_MEANS_SMOTE':
+            self.X_train, self.y_train = over_sample.k_means_smote(self.X_train, self.y_train)
+        elif over_sampler == 'SVM_SMOTE':
+            self.X_train, self.y_train = over_sample.svm_smote(self.X_train, self.y_train)
+        elif over_sampler == 'BORDERLINE_SMOTE':
+            self.X_train, self.y_train = over_sample.borderline_smote(self.X_train, self.y_train)
         elif over_sampler == 'RANDOM':
-            self.X_train, self.y_train = self.random_over_sample(3, self.X_train, self.y_train)
+            self.X_train, self.y_train = over_sample.random(3, self.X_train, self.y_train)
         elif over_sampler == 'ADASYN':
-            self.X_train, self.y_train = self.adasyn_over_sample(self.X_train, self.y_train)
+            self.X_train, self.y_train = over_sample.adasyn(self.X_train, self.y_train)
         # standardize train set and test set values.
         self.X_train = preprocessing.minmax_scale(self.X_train, feature_range=(0, 1))
         self.X_val = preprocessing.minmax_scale(self.X_val, feature_range=(0, 1))
@@ -175,35 +159,6 @@ class CHDOverSampled:
         print("y_val shape = " + str(self.y_val.shape))
         print("y_train distribution = " + str(y_train_counter))
         print("y_val distribution = " + str(y_test_counter))
-
-    def random_over_sample(self, x_set, y, rand_state):
-        from imblearn.over_sampling import RandomOverSampler
-        ros = RandomOverSampler(random_state=rand_state, sampling_strategy='minority')
-        X_resampled, y_resampled = ros.fit_resample(x_set, y)
-        return X_resampled, y_resampled
-
-    def adasyn_over_sample(self, x_set, y):
-        from imblearn.over_sampling import ADASYN
-        X_resampled, y_resampled = ADASYN(sampling_strategy='minority').fit_resample(x_set, y)
-        return X_resampled, y_resampled
-
-    def smote_over_sample(self, x_set, y):
-        X_resampled, y_resampled = SMOTE(sampling_strategy='minority').fit_resample(x_set, y)
-        return X_resampled, y_resampled
-
-    def borderline_smote_over_sample(self, x_set, y):
-        X_resampled, y_resampled = BorderlineSMOTE(sampling_strategy='minority').fit_resample(x_set, y)
-        return X_resampled, y_resampled
-
-    def k_means_smote_over_sample(self, x_set, y):
-        # Make this a binary classification problem
-        y = y == 1
-        X_resampled, y_resampled = KMeansSMOTE(sampling_strategy='minority', random_state=42).fit_resample(x_set, y)
-        return X_resampled, y_resampled
-
-    def svm_smote_over_sample(self, x_set, y):
-        X_resampled, y_resampled = SVMSMOTE(sampling_strategy='minority').fit_resample(x_set, y)
-        return X_resampled, y_resampled
 
     def shuffle_dataset(self, x_set, y):
         from sklearn.utils import shuffle
