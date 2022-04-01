@@ -25,12 +25,8 @@ class CHDOverSampled:
     global feature_weights  # rate for each feature suggested by LASSO
     global X_train
     global y_train
-    global X_val
-    global y_val
-    global x_train_org
-    global x_test_org
-    global y_train_org
-    global y_test_org
+    global X_test
+    global y_test
 
     def acquire_gpu(self):
         # to extend gpu memory while fitting model
@@ -122,28 +118,28 @@ class CHDOverSampled:
     def split_dataset(self, ip_data, over_sampler):
         selected_data = ip_data[:, self.featureIndex]
         selected_weights = self.feature_weights[self.featureIndex]
-        self.X_train, self.X_val, self.y_train, self.y_val = train_test_split(selected_data,
-                                                                              self.opLabel,
-                                                                              test_size=0.33,
-                                                                              shuffle=True,
-                                                                              stratify=self.opLabel,
-                                                                              random_state=5)
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(selected_data,
+                                                                                self.opLabel,
+                                                                                test_size=0.33,
+                                                                                shuffle=True,
+                                                                                stratify=self.opLabel,
+                                                                                random_state=5)
         # over sample minority class only for the train set.
         self.X_train, self.y_train = self.augment_set(over_sampler, self.X_train, self.y_train)
         # standardize train set and test set values(in rage 0-1).
         self.X_train = preprocessing.minmax_scale(self.X_train, feature_range=(0, 1))
-        self.X_val = preprocessing.minmax_scale(self.X_val, feature_range=(0, 1))
+        self.X_test = preprocessing.minmax_scale(self.X_test, feature_range=(0, 1))
         # apply lasso weights on both X-sets
         self.apply_lasso_weights(selected_weights, self.X_train)
-        self.apply_lasso_weights(selected_weights, self.X_val)
+        self.apply_lasso_weights(selected_weights, self.X_test)
         # get distribution of both classes.
-        y_test_counter = Counter(self.y_val)
+        y_test_counter = Counter(self.y_test)
         y_train_counter = Counter(self.y_train)
         # print the result
         print("X_train shape = " + str(self.X_train.shape))
         print("y_train shape = " + str(self.y_train.shape))
-        print("X_val shape = " + str(self.X_val.shape))
-        print("y_val shape = " + str(self.y_val.shape))
+        print("X_val shape = " + str(self.X_test.shape))
+        print("y_val shape = " + str(self.y_test.shape))
         print("y_train distribution = " + str(y_train_counter))
         print("y_val distribution = " + str(y_test_counter))
 
@@ -165,14 +161,14 @@ class CHDOverSampled:
             X_aug, y_aug = over_sample.smote(X, y)
         return X_aug, y_aug
 
-    def shuffle_dataset(self, x_set, y):
+    def shuffle_dataset(self, X, y):
         from sklearn.utils import shuffle
-        data = self.merge_label(x_set, y)
+        data = self.merge_label(X, y)
         data = shuffle(data)
         return self.split_label(data)
 
-    def merge_label(self, x_set, y):
-        return np.concatenate((x_set, y.T[:, None]), axis=1)
+    def merge_label(self, X, y):
+        return np.concatenate((X, y.T[:, None]), axis=1)
 
     def split_label(self, data):
         x_set = data[:, :-1]
@@ -207,10 +203,10 @@ class CHDOverSampled:
 
     def reshape_sets(self):
         self.X_train = self.X_train.reshape(self.X_train.shape[0], self.X_train.shape[1], 1)
-        self.X_val = self.X_val.reshape(self.X_val.shape[0], self.X_val.shape[1], 1)
+        self.X_test = self.X_test.reshape(self.X_test.shape[0], self.X_test.shape[1], 1)
         # one-hot-encoding
         self.y_train = keras.utils.to_categorical(self.y_train, 2)
-        self.y_val = keras.utils.to_categorical(self.y_val, 2)
+        self.y_test = keras.utils.to_categorical(self.y_test, 2)
 
     def create_model(self, lr):
         inputs = keras.layers.Input(shape=(self.X_train.shape[1], 1))
@@ -278,21 +274,20 @@ class CHDOverSampled:
             self.y_train,
             epochs=epochs,
             callbacks=[callback],
-            validation_data=(self.X_val, self.y_val)
+            validation_data=(self.X_test, self.y_test)
         )
 
     def evaluate_model(self, model):
-        val_loss, val_precision, val_recall, val_auc = model.evaluate(x=self.X_val, y=self.y_val)
-        y_predict = model.predict(self.X_val)
-        conf_mat = metrics.confusion_matrix(np.argmax(self.y_val, axis=1), np.argmax(y_predict, axis=1))
+        val_loss, val_precision, val_recall, val_auc = model.evaluate(x=self.X_test, y=self.y_test)
+        y_predict = model.predict(self.X_test)
+        conf_mat = metrics.confusion_matrix(np.argmax(self.y_test, axis=1), np.argmax(y_predict, axis=1))
         print("")
         print("")
-        print("confusion matrix = ")
-        print(conf_mat)
-        print("precision evaluation result = " + str(val_precision))
-        print("recall evaluation result = " + str(val_recall))
-        print("acu evaluation result = " + str(val_auc))
-        print("loss evaluation result = " + str(val_loss))
+        print("confusion matrix = ", conf_mat)
+        print("precision evaluation result = ", val_precision)
+        print("recall evaluation result = ", val_recall)
+        print("acu evaluation result = ", val_auc)
+        print("loss evaluation result = ", val_loss)
 
     def save_result(self):
         self.save_history(history_res, 'precision')
@@ -305,23 +300,21 @@ class CHDOverSampled:
         self.save_history_diff(history_res, 'loss')
 
     def save_history(self, train_res, metric):
-        file = '/home/mohsen/work-space/Thesis/output/article/new_result/' + metric + '.png'
         plt.plot(train_res.history[metric])
         plt.plot(train_res.history['val_' + metric])
         plt.title('model ' + metric)
         plt.ylabel(metric)
         plt.xlabel('epoch')
         plt.legend(['train', 'test'], loc='lower right')
-        plt.savefig(file)
+        plt.show()
 
     def save_history_diff(self, train_res, metric):
-        file = '/home/mohsen/work-space/Thesis/output/article/new_result/' + metric + '.png'
         diff = list(np.array(train_res.history[metric]) - np.array(train_res.history['val_' + metric]))
         plt.plot(diff)
         plt.title('model ' + metric + ' diff')
         plt.ylabel('difference')
         plt.xlabel('epoch')
-        plt.savefig(file)
+        plt.show()
 
 
 if __name__ == '__main__':
@@ -331,14 +324,12 @@ if __name__ == '__main__':
     inp_data = chd_oversampled.drop_variables(inp_data)
     inp_data = chd_oversampled.convert_to_dummies(inp_data)
     chd_oversampled.apply_lasso(inp_data)
-
     chd_oversampled.split_dataset(inp_data, 'SVM_SMOTE')
-    # chd_oversampled.split_dataset(inp_data, 'K_MEANS_SMOTE')
-    # chd_oversampled.split_dataset(inp_data, 'BORDERLINE_SMOTE')
     # chd_oversampled.visualize_sets()
-
     chd_oversampled.reshape_sets()
     cnn_model = chd_oversampled.create_model(lr=0.01)
-    history_res = chd_oversampled.fit_model(model=cnn_model, epochs=1000, monitor="precision",
+    history_res = chd_oversampled.fit_model(model=cnn_model,
+                                            epochs=1000,
+                                            monitor="precision",
                                             mode="max")
     chd_oversampled.evaluate_model(model=cnn_model)
