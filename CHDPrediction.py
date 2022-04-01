@@ -10,8 +10,7 @@ from numpy.random import seed
 from sklearn import metrics
 from sklearn import preprocessing
 from sklearn.linear_model import Lasso
-# t-SNE visualization
-from sklearn.manifold import TSNE
+from sklearn.manifold import TSNE  # t-SNE visualization
 from sklearn.model_selection import train_test_split
 from tensorflow import keras
 
@@ -74,8 +73,8 @@ class CHDOverSampled:
 
     def apply_lasso(self, ip_data):
         feature_votes = np.zeros(ip_data.shape[1])
-        iteR = 100
-        for num in range(iteR):
+        iteration = 100
+        for num in range(iteration):
             label0_index = np.where(self.opLabel == 0)[0]  # no coronary heart disease
             label1_index = np.where(self.opLabel == 1)[0]  # coronary heart disease
             numTrainData0 = 1300
@@ -96,21 +95,21 @@ class CHDOverSampled:
             trainData_scaled = scaler.transform(trainData)
             # testData_scaled = scaler.transform(testData)
             # Elastic net and Lasso from scikit
-            # regr = ElasticNet(random_state=0, alpha=1, l1_ratio=0.03, tol=0.000001, max_iter=100000)
-            regr = Lasso(random_state=0, alpha=0.006, tol=0.000001, max_iter=100000)
-            # regr = LogisticRegression(penalty='l1',random_state=0,C=100,tol=0.000001,max_iter=100,
+            # regression = ElasticNet(random_state=0, alpha=1, l1_ratio=0.03, tol=0.000001, max_iter=100000)
+            regression = Lasso(random_state=0, alpha=0.006, tol=0.000001, max_iter=100000)
+            # regression = LogisticRegression(penalty='l1',random_state=0,C=100,tol=0.000001,max_iter=100,
             # class_weight='balanced')
-            regr.fit(trainData_scaled, trainLabel)
-            cof = np.abs(regr.coef_)
+            regression.fit(trainData_scaled, trainLabel)
+            cof = np.abs(regression.coef_)
             colIndex = np.where(cof != 0)[0]
             for col in colIndex:
                 feature_votes[col] += 1
         print("feature votes = " + str(feature_votes))
         # feature nomination via Lasso (from feature 1 to 30)
-        # keep the dummy variables
-        # thresH = iteR // 5  # Pick features occurring more than 5 times
-        thresH = 0
-        self.featureIndex = np.where(feature_votes[0:30] >= thresH)[0]
+        # keep the dummy variables'
+        # threshold = iteration // 5  # Pick features occurring more than 5 times
+        threshold = 0
+        self.featureIndex = np.where(feature_votes[0:30] >= threshold)[0]
         self.featureIndex = np.append(self.featureIndex, np.arange(30, ip_data.shape[1]))
         self.feature_weights = preprocessing.minmax_scale(feature_votes, feature_range=(0, 1))
         print("LASSO weights for each feature: " + str(self.feature_weights))
@@ -129,36 +128,42 @@ class CHDOverSampled:
                                                                               shuffle=True,
                                                                               stratify=self.opLabel,
                                                                               random_state=5)
-        # apply Over Sampling methods only over train-set
-        over_sample = OverSample()
-        if over_sampler == 'SMOTE':
-            self.X_train, self.y_train = over_sample.smote(self.X_train, self.y_train)
-        elif over_sampler == 'K_MEANS_SMOTE':
-            self.X_train, self.y_train = over_sample.k_means_smote(self.X_train, self.y_train)
-        elif over_sampler == 'SVM_SMOTE':
-            self.X_train, self.y_train = over_sample.svm_smote(self.X_train, self.y_train)
-        elif over_sampler == 'BORDERLINE_SMOTE':
-            self.X_train, self.y_train = over_sample.borderline_smote(self.X_train, self.y_train)
-        elif over_sampler == 'RANDOM':
-            self.X_train, self.y_train = over_sample.random(3, self.X_train, self.y_train)
-        elif over_sampler == 'ADASYN':
-            self.X_train, self.y_train = over_sample.adasyn(self.X_train, self.y_train)
-        # standardize train set and test set values.
+        # over sample minority class only for the train set.
+        self.X_train, self.y_train = self.augment_set(over_sampler, self.X_train, self.y_train)
+        # standardize train set and test set values(in rage 0-1).
         self.X_train = preprocessing.minmax_scale(self.X_train, feature_range=(0, 1))
         self.X_val = preprocessing.minmax_scale(self.X_val, feature_range=(0, 1))
-        # apply weights on both sets
+        # apply lasso weights on both X-sets
         self.apply_lasso_weights(selected_weights, self.X_train)
         self.apply_lasso_weights(selected_weights, self.X_val)
         # get distribution of both classes.
         y_test_counter = Counter(self.y_val)
         y_train_counter = Counter(self.y_train)
-        # print every thing
+        # print the result
         print("X_train shape = " + str(self.X_train.shape))
         print("y_train shape = " + str(self.y_train.shape))
         print("X_val shape = " + str(self.X_val.shape))
         print("y_val shape = " + str(self.y_val.shape))
         print("y_train distribution = " + str(y_train_counter))
         print("y_val distribution = " + str(y_test_counter))
+
+    def augment_set(self, over_sampler, X, y):
+        over_sample = OverSample()
+        if over_sampler == 'SMOTE':
+            X_aug, y_aug = over_sample.smote(X, y)
+        elif over_sampler == 'K_MEANS_SMOTE':
+            X_aug, y_aug = over_sample.k_means_smote(X, y)
+        elif over_sampler == 'SVM_SMOTE':
+            X_aug, y_aug = over_sample.svm_smote(X, y)
+        elif over_sampler == 'BORDERLINE_SMOTE':
+            X_aug, y_aug = over_sample.borderline_smote(X, y)
+        elif over_sampler == 'RANDOM':
+            X_aug, y_aug = over_sample.random(3, X, y)
+        elif over_sampler == 'ADASYN':
+            X_aug, y_aug = over_sample.adasyn(X, y)
+        else:
+            X_aug, y_aug = over_sample.smote(X, y)
+        return X_aug, y_aug
 
     def shuffle_dataset(self, x_set, y):
         from sklearn.utils import shuffle
@@ -174,10 +179,10 @@ class CHDOverSampled:
         y = data[:, -1]
         return x_set, y
 
-    def apply_lasso_weights(self, weights, train_set):
+    def apply_lasso_weights(self, weights, dataset):
         i = 0
         for w in weights:
-            train_set[:, i] *= w
+            dataset[:, i] *= w
             i += 1
 
     def visualize_sets(self):
@@ -289,22 +294,34 @@ class CHDOverSampled:
         print("acu evaluation result = " + str(val_auc))
         print("loss evaluation result = " + str(val_loss))
 
-    def plot_history(self, train_res, metric):
+    def save_result(self):
+        self.save_history(history_res, 'precision')
+        self.save_history(history_res, 'auc')
+        self.save_history(history_res, 'recall')
+        self.save_history(history_res, 'loss')
+        self.save_history_diff(history_res, 'precision')
+        self.save_history_diff(history_res, 'auc')
+        self.save_history_diff(history_res, 'recall')
+        self.save_history_diff(history_res, 'loss')
+
+    def save_history(self, train_res, metric):
+        file = '/home/mohsen/work-space/Thesis/output/article/new_result/' + metric + '.png'
         plt.plot(train_res.history[metric])
         plt.plot(train_res.history['val_' + metric])
         plt.title('model ' + metric)
         plt.ylabel(metric)
         plt.xlabel('epoch')
         plt.legend(['train', 'test'], loc='lower right')
-        plt.show()
+        plt.savefig(file)
 
-    def plot_history_diff(self, train_res, metric):
+    def save_history_diff(self, train_res, metric):
+        file = '/home/mohsen/work-space/Thesis/output/article/new_result/' + metric + '.png'
         diff = list(np.array(train_res.history[metric]) - np.array(train_res.history['val_' + metric]))
         plt.plot(diff)
         plt.title('model ' + metric + ' diff')
         plt.ylabel('difference')
         plt.xlabel('epoch')
-        plt.show()
+        plt.savefig(file)
 
 
 if __name__ == '__main__':
@@ -319,16 +336,9 @@ if __name__ == '__main__':
     # chd_oversampled.split_dataset(inp_data, 'K_MEANS_SMOTE')
     # chd_oversampled.split_dataset(inp_data, 'BORDERLINE_SMOTE')
     # chd_oversampled.visualize_sets()
+
     chd_oversampled.reshape_sets()
     cnn_model = chd_oversampled.create_model(lr=0.01)
     history_res = chd_oversampled.fit_model(model=cnn_model, epochs=1000, monitor="precision",
                                             mode="max")
     chd_oversampled.evaluate_model(model=cnn_model)
-    chd_oversampled.plot_history(history_res, 'precision')
-    chd_oversampled.plot_history(history_res, 'auc')
-    chd_oversampled.plot_history(history_res, 'recall')
-    chd_oversampled.plot_history(history_res, 'loss')
-    chd_oversampled.plot_history_diff(history_res, 'precision')
-    chd_oversampled.plot_history_diff(history_res, 'auc')
-    chd_oversampled.plot_history_diff(history_res, 'recall')
-    chd_oversampled.plot_history_diff(history_res, 'loss')
