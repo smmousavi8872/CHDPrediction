@@ -1,3 +1,4 @@
+import statistics
 from collections import Counter
 
 import numpy as np
@@ -11,7 +12,7 @@ from sklearn import metrics
 from sklearn import preprocessing
 from sklearn.linear_model import Lasso
 from sklearn.manifold import TSNE  # t-SNE visualization
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from tensorflow import keras
 
 from OverSample import OverSample
@@ -19,7 +20,7 @@ from OverSample import OverSample
 np.random.seed(2095)
 
 
-class CHDPrediction:
+class CHDPredictionCV:
     global varb  # selected features by LASSO
     global featureIndex  # indexes of selected features by LASSO
     global feature_weights  # rate for each feature suggested by LASSO
@@ -41,8 +42,8 @@ class CHDPrediction:
         ipData = pd.read_excel(file, sheet_name='CoroHeartDis')
         CHD_label = ipData.CoronaryHeartDisease
         counter = Counter(CHD_label)
-        print("shape of input dataset = " + str(ipData.shape))
-        print("distribution of input dataset = " + str(counter))
+        print("Shape of input dataset = " + str(ipData.shape))
+        print("Distribution of input dataset = " + str(counter))
         print(str(len(ipData.index)) + " records")
         return ipData
 
@@ -53,7 +54,7 @@ class CHDPrediction:
                       'X60-sec-pulse',
                       'Health-Insurance', 'Lymphocyte', 'Monocyte', 'Eosinophils', 'Total-Cholesterol', 'Mean-Cell-Vol',
                       'Mean-Cell-Hgb-Conc.', 'Hematocrit', 'Segmented-Neutrophils'], axis=1, inplace=True)
-        print("shape after dropping variables" + str(ip_data.shape))
+        print("Shape after dropping variables" + str(ip_data.shape))
         # opLabel = np.array(ipData['Stroke'])
         # ipData.drop(['SEQN','Stroke','Annual-Family-Income','Height','Ratio-Family-Income-Poverty','X60-sec-pulse',
         # 'Health-Insurance','Lymphocyte','Monocyte','Eosinophils','Total-Cholesterol','Mean-Cell-Vol',
@@ -100,7 +101,6 @@ class CHDPrediction:
             colIndex = np.where(cof != 0)[0]
             for col in colIndex:
                 feature_votes[col] += 1
-        print("feature votes = " + str(feature_votes))
         # feature nomination via Lasso (from feature 1 to 30)
         # keep the dummy variables'
         # threshold = iteration // 5  # Pick features occurring more than 5 times
@@ -108,23 +108,34 @@ class CHDPrediction:
         self.featureIndex = np.where(feature_votes[0:30] >= threshold)[0]
         self.featureIndex = np.append(self.featureIndex, np.arange(30, ip_data.shape[1]))
         self.feature_weights = preprocessing.minmax_scale(feature_votes, feature_range=(0, 1))
-        print("LASSO weights for each feature: " + str(self.feature_weights))
-        print("selected features shape = " + str(self.featureIndex.shape))
+        print("Selected features shape = " + str(self.featureIndex.shape))
         # ???
-        tInx = np.arange(ip_data.shape[1])
-        rrInx = tInx[~np.isin(tInx, self.featureIndex)]
-        print(self.varb[rrInx])
+        # tInx = np.arange(ip_data.shape[1])
+        # rrInx = tInx[~np.isin(tInx, self.featureIndex)]
+        # print(self.varb[rrInx])
 
-    def split_dataset(self, ip_data):
+    def split_dataset(self, ip_data, test_size):
         selected_data = ip_data[:, self.featureIndex]
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(selected_data,
                                                                                 self.opLabel,
-                                                                                test_size=0.33,
+                                                                                test_size=test_size,
                                                                                 shuffle=True,
                                                                                 stratify=self.opLabel,
                                                                                 random_state=5)
 
-    def post_process_splits(self, over_sampler):
+    def split_k_fold(self, k, ip_data):
+        folds = []
+        selected_data = ip_data[:, self.featureIndex]
+        kf = KFold(n_splits=k, random_state=None, shuffle=False)
+        for train_index, test_index in kf.split(selected_data):
+            folds.append([selected_data[train_index],
+                          self.opLabel[train_index],
+                          selected_data[test_index],
+                          self.opLabel[test_index]])
+
+        return folds
+
+    def initialize_model(self, over_sampler):
         selected_weights = self.feature_weights[self.featureIndex]
         # over sample minority class only for the train set.
         self.X_train, self.y_train = self.augment_set(over_sampler, self.X_train, self.y_train)
@@ -134,9 +145,10 @@ class CHDPrediction:
         # apply lasso weights on both X-sets
         self.apply_lasso_weights(selected_weights, self.X_train)
         self.apply_lasso_weights(selected_weights, self.X_test)
-        # print shape and distributions
+        # print result
         y_train_counter = Counter(self.y_train)
         y_test_counter = Counter(self.y_test)
+        # print shape and distributions
         print("X_train shape = " + str(self.X_train.shape))
         print("y_train shape = " + str(self.y_train.shape))
         print("X_test shape = " + str(self.X_test.shape))
@@ -186,10 +198,9 @@ class CHDPrediction:
         return x_set, y
 
     def apply_lasso_weights(self, weights, dataset):
-        i = 0
-        for w in weights:
-            dataset[:, i] *= w
-            i += 1
+        for n, w in enumerate(weights):
+            dataset[:, n] *= w
+            n += 1
 
     def visualize_sets(self):
         X_embedded = TSNE(n_components=3, n_iter=300, verbose=1).fit_transform(self.X_train)
@@ -259,7 +270,7 @@ class CHDPrediction:
                      tf.keras.metrics.Recall(),
                      tf.keras.metrics.AUC()]
         )
-        CNN1D4.summary()
+        # CNN1D4.summary()
         return CNN1D4
 
     def fit_model(self, model, epochs, monitor, mode):
@@ -284,13 +295,8 @@ class CHDPrediction:
         val_loss, val_precision, val_recall, val_auc = model.evaluate(x=self.X_test, y=self.y_test)
         y_predict = model.predict(self.X_test)
         conf_mat = metrics.confusion_matrix(np.argmax(self.y_test, axis=1), np.argmax(y_predict, axis=1))
-        print("")
-        print("")
-        print("confusion matrix = ", conf_mat)
-        print("precision evaluation result = ", val_precision)
-        print("recall evaluation result = ", val_recall)
-        print("acu evaluation result = ", val_auc)
-        print("loss evaluation result = ", val_loss)
+        keras.backend.clear_session()
+        return val_loss, val_precision, val_recall, val_auc, conf_mat
 
     def show_result(self, history):
         self.show_history(history, 'precision')
@@ -319,25 +325,59 @@ class CHDPrediction:
         plt.xlabel('epoch')
         plt.show()
 
-    def begin_learning_procedure(self):
-        cnn_model = self.create_model(lr=0.01)
-        history = self.fit_model(model=cnn_model,
-                                 epochs=1000,
-                                 monitor="precision",
-                                 mode="max")
-        chd_prediction.evaluate_model(model=cnn_model)
-        chd_prediction.show_result(history)
+    def start_learning(self, lr, epochs, callback_monitor):
+        cnn_model = self.create_model(lr=lr)
+        self.fit_model(model=cnn_model,
+                       epochs=epochs,
+                       monitor=callback_monitor,
+                       mode="max")
+        return chd_prediction.evaluate_model(model=cnn_model)
+
+    def report_result(self, eval_results):
+        losses = [item[0] for item in eval_results]
+        precisions = [item[1] for item in eval_results]
+        recalls = [item[2] for item in eval_results]
+        AUCs = [item[3] for item in eval_results]
+        mean_loss = statistics.mean(losses)
+        mean_precision = statistics.mean(precisions)
+        mean_recall = statistics.mean(recalls)
+        mean_auc = statistics.mean(AUCs)
+        var_loss = np.var(losses)
+        var_precision = np.var(precisions)
+        var_recall = np.var(recalls)
+        var_auc = np.var(AUCs)
+        print("**************************************** Result Report ****************************************")
+        print("Average Loss  = ", mean_loss)
+        print("Average Precision = ", mean_precision)
+        print("Average Recall = ", mean_recall)
+        print("Average AUC = ", mean_auc)
+        print("Variance of Loss = ", var_loss)
+        print("Variance of Precision = ", var_precision)
+        print("Variance of Recall = ", var_recall)
+        print("Variance of AUC = ", var_auc)
 
 
 if __name__ == '__main__':
-    chd_prediction = CHDPrediction()
+    chd_prediction = CHDPredictionCV()
     chd_prediction.acquire_gpu()
     input_data = chd_prediction.read_dataset()
     input_data = chd_prediction.drop_variables(input_data)
     input_data = chd_prediction.convert_to_dummies(input_data)
     chd_prediction.apply_lasso(input_data)
-
-    chd_prediction.split_dataset(input_data)
-    chd_prediction.post_process_splits('SVM_SMOTE')
-    # chd_oversampled.visualize_sets()
-    chd_prediction.begin_learning_procedure()
+    k_folds = chd_prediction.split_k_fold(3, input_data)
+    folds_eval_result = []
+    for i, fold in enumerate(k_folds):
+        chd_prediction.X_train = fold[0]
+        chd_prediction.y_train = fold[1]
+        chd_prediction.X_test = fold[2]
+        chd_prediction.y_test = fold[3]
+        print("")
+        print("**************************************** Fold Number", i + 1,
+              "Model Initialization ****************************************")
+        chd_prediction.initialize_model('SVM_SMOTE')
+        print("")
+        print("**************************************** Fold Number", i + 1,
+              "Learning Procedure ******************************************")
+        result = chd_prediction.start_learning(lr=0.01, epochs=2, callback_monitor='precision')
+        folds_eval_result.append(result)
+    chd_prediction.report_result(folds_eval_result)
